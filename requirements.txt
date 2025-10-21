@@ -1,4 +1,5 @@
 gurobipy==12.0.3
 numpy==2.3.4
+pandas == 2.3.3
 setuptools==80.9.0
 wheel==0.45.1
