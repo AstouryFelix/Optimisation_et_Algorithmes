@@ -1,6 +1,10 @@
 import gurobipy as gp
 from gurobipy import GRB
 
+# /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ 
+# /!\ CHANGER DONNEES EN LISTES, NE PLUS UTILISER DE DICO /!\ 
+# /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\
+
 # 24 Hour Load Forecast (MW)
 load_forecast = [
      4,  4,  4,  4,  4,  4,   6,   6,
@@ -84,9 +88,10 @@ with gp.Env() as env, gp.Model(env=env) as model:
 
     # add variables for thermal units (power and statuses for commitment, startup and shutdown)
 
+    shape = tuple([len(thermal_units), nTimeIntervals])
     # Output power for unit i at time interval t (MW )                                   pit
     thermal_units_out_power = model.addMVar(
-        (thermal_units, nTimeIntervals), 
+        shape = shape, 
         vtype = GRB.CONTINUOUS,
         lb = 0,
         name="thermal_units_out_power"
@@ -94,21 +99,21 @@ with gp.Env() as env, gp.Model(env=env) as model:
 
     # Startup Status for thermal unit i at time interval t (1: Start Up, 0: Otherwise)    vit
     thermal_units_startup_status = model.addMVar(
-        (thermal_units, nTimeIntervals),
+        shape = shape,
         vtype = GRB.BINARY,
         name="thermal_unit_startup_status",
     ) 
 
     # Shutdown Status for thermal unit i at time interval t (1: Shutdown, 0: Otherwise)   wit
     thermal_units_shutdown_status = model.addMVar(
-        (thermal_units, nTimeIntervals),
+        shape = shape,
         vtype = GRB.BINARY,
         name="thermal_unit_shutdown_status",
     ) 
 
     # Commitment Status for thermal unit i at time interval t (1: Online, 0: Otherwise))  uit
     thermal_units_comm_status = model.addMVar(
-        (thermal_units, nTimeIntervals),
+        shape = shape,
         vtype = GRB.BINARY,
         name="thermal_unit_comm_status"
     ) 
@@ -116,18 +121,18 @@ with gp.Env() as env, gp.Model(env=env) as model:
     # define objective function as an empty quadratic construct and add terms
     obj_fun_expr = gp.QuadExpr(0)
     for t in range(nTimeIntervals):
-        for g in thermal_units:
-            obj_fun_expr.add(γi[g] * thermal_units_out_power[(g,t)]**2   +
-                             βi[g] * thermal_units_out_power[(g,t)]      +
-                             αi[g] * thermal_units_comm_status[(g,t)]    +  
-                             δi[g] * thermal_units_startup_status[(g,t)] +
-                             ζi[g] * thermal_units_shutdown_status[(g,t)]) 
+        for g in range(len(thermal_units)):
+            obj_fun_expr.add(γi[thermal_units[g]] * thermal_units_out_power[g][t]**2   +
+                             βi[thermal_units[g]] * thermal_units_out_power[g][t]      +
+                             αi[thermal_units[g]] * thermal_units_comm_status[g][t]    +  
+                             δi[thermal_units[g]] * thermal_units_startup_status[g][t] +
+                             ζi[thermal_units[g]] * thermal_units_shutdown_status[g][t]) 
     model.setObjective(obj_fun_expr)
 
     # Power balance equations
     for t in range(nTimeIntervals):
         model.addConstr(
-            gp.quicksum(thermal_units_out_power[(g,t)] for g in thermal_units) == Lt[t] - St[t] ,
+           thermal_units_out_power.sum(axis=1) == Lt - St ,
             name="power_balance_" + str(t),
         )
 
