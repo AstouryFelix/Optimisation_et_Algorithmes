@@ -31,7 +31,6 @@ with gp.Env() as env, gp.Model(name, env=env) as model:
 
     model.setObjective(gp.quicksum(c[t]*x[t] + f[t]*y[t] + h[t]*i[t] for t in range(H)))
     
-    
     for t in range(H) :
         if t == 0 :
             model.addConstr(I0 + x[0] - d[0] == i[0])
