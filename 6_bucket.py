@@ -27,7 +27,7 @@ with gp.Env() as env, gp.Model(name="portfolio", env=env) as model:
     R = model.addVar(lb = 0, ub = 1, vtype = GRB.CONTINUOUS, name="R") 
     h = model.addVar(lb = 0, ub = 1, vtype = GRB.CONTINUOUS, name="h")
 
-    # V = math.pi * h * (R**2 + R*r + r**2) / 3
+    # V = math.pi * h * (R*R + R*r + r*r) / 3
     # model.setObjective(V, GRB.MAXIMIZE)
     
     # A_bot = math.pi * R**2
