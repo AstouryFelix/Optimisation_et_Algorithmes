@@ -1,9 +1,11 @@
+import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 
 # /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ 
 # /!\ CHANGER DONNEES EN LISTES, NE PLUS UTILISER DE DICO /!\ 
 # /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\ /!\
+# En Numpy.Array, pas liste de base ! 
 
 # 24 Hour Load Forecast (MW)
 load_forecast = [
@@ -44,18 +46,21 @@ thermal_units_dyn_data, init_status = gp.multidict(
     {"gen1": [0], "gen2": [0], "gen3": [0]}
 )
 
+def dic_to_array(keys, dic):
+    return np.array([dic[k] for k in keys])
+
 # i = len(thermal_units)
 # t = nTimeIntervals
-pi_max = pmax       # Maximum Power for unit i (MW)
-pi_min = pmin       # Minimum Power for unit i (MW)
-αi = a              # Fixed Cost for unit i ($/h)
-βi = b              # Linear Cost for unit i ($/MWh)
-γi = c              # Quadratic Cost for unit i ($/MWh/MWh)
-δi = sup_cost       # Start Up Cost for unit i ($)
-ζi = sdn_cost       # Shutdown Cost for unit i ($)
-Lt = load_forecast  # Load Forecast at time interval t (MW)
-St = solar_forecast # Solar Energy Forecast at time interval t (MW)
-
+init_status = dic_to_array(thermal_units, init_status)
+pi_max      = dic_to_array(thermal_units, pmax       )  # Maximum Power for unit i (MW)
+pi_min      = dic_to_array(thermal_units, pmin       )  # Minimum Power for unit i (MW)
+αi          = dic_to_array(thermal_units, a          )  # Fixed Cost for unit i ($/h)
+βi          = dic_to_array(thermal_units, b          )  # Linear Cost for unit i ($/MWh)
+γi          = dic_to_array(thermal_units, c          )  # Quadratic Cost for unit i ($/MWh/MWh)
+δi          = dic_to_array(thermal_units,sup_cost    )  # Start Up Cost for unit i ($)
+ζi          = dic_to_array(thermal_units,sdn_cost    )  # Shutdown Cost for unit i ($)
+Lt          = load_forecast                              # Load Forecast at time interval t (MW)
+St          = solar_forecast                             # Solar Energy Forecast at time interval t (MW)
 
 def show_results():
     obj_val_s = model.ObjVal
@@ -66,11 +71,11 @@ def show_results():
         print("%4s" % t, end=" ")
     print("\n")
 
-    # for g in thermal_units:
+    # for g in range (len(thermal_units)):
     for g in range(len(thermal_units)) :
         print("%5s" % g, end=" ")
         for t in range(nTimeIntervals):
-            print("%4.1f" % thermal_units_out_power[(thermal_units[g], t)].X, end=" ")
+            print("%4.1f" % thermal_units_out_power[g, t].X, end=" ")
         print("\n")
 
     print("%5s" % "Solar", end=" ")
@@ -86,10 +91,8 @@ def show_results():
 
 with gp.Env() as env, gp.Model(env=env) as model:
 
-    # add variables for thermal units (power and statuses for commitment, startup and shutdown)
-
+    # Output power for unit i at time interval t (MW )                                    pit
     shape = tuple([len(thermal_units), nTimeIntervals])
-    # Output power for unit i at time interval t (MW )                                   pit
     thermal_units_out_power = model.addMVar(
         shape = shape, 
         vtype = GRB.CONTINUOUS,
@@ -119,72 +122,64 @@ with gp.Env() as env, gp.Model(env=env) as model:
     ) 
 
     # define objective function as an empty quadratic construct and add terms
-    obj_fun_expr = gp.QuadExpr(0)
-    for t in range(nTimeIntervals):
-        for g in range(len(thermal_units)):
-            obj_fun_expr.add(γi[thermal_units[g]] * thermal_units_out_power[g][t]**2   +
-                             βi[thermal_units[g]] * thermal_units_out_power[g][t]      +
-                             αi[thermal_units[g]] * thermal_units_comm_status[g][t]    +  
-                             δi[thermal_units[g]] * thermal_units_startup_status[g][t] +
-                             ζi[thermal_units[g]] * thermal_units_shutdown_status[g][t]) 
-    model.setObjective(obj_fun_expr)
+    model.setObjective( 
+        (γi[:,None] * thermal_units_out_power**2).sum()   + 
+        (βi[:,None] * thermal_units_out_power).sum()      +
+        (αi[:,None] * thermal_units_comm_status).sum()    +  
+        (δi[:,None] * thermal_units_startup_status).sum() +
+        (ζi[:,None] * thermal_units_shutdown_status).sum()
+    )         
 
     # Power balance equations
-    for t in range(nTimeIntervals):
-        model.addConstr(
-           thermal_units_out_power.sum(axis=1) == Lt - St ,
-            name="power_balance_" + str(t),
-        )
+    model.addConstr(
+        thermal_units_out_power.sum(axis=0) == np.array(Lt) - np.array(St) ,
+        name="power_balance",
+    )
 
     # Thermal units physical constraints, using indicator constraints
-    for t in range(nTimeIntervals):
-        for g in thermal_units:
-            model.addGenConstrIndicator(
-                thermal_units_comm_status[(g, t)],  # binary indicator variable
-                1,                                  # when status = 1
-                thermal_units_out_power[(g, t)],    # left-hand side
-                GRB.GREATER_EQUAL,                  # sense
-                pi_min[g],                          # right-hand side
-                name=f"min_power_{g}_{t}"
-                # thermal_units_comm_status[(g,t)] * pi_min[g] <= thermal_units_out_power[(g,t)]
-            )
-            model.addGenConstrIndicator(
-                thermal_units_comm_status[(g, t)],  # binary indicator variable
-                1,                                  # when status = 1
-                thermal_units_out_power[(g, t)],    # left-hand side
-                GRB.LESS_EQUAL,                     # sense
-                pi_max[g],                          # right-hand side
-                name=f"max_power_{g}_{t}"
-                # thermal_units_out_power[(g,t)] <= thermal_units_comm_status[(g,t)] * pi_max[g]
-            )
-            model.addGenConstrIndicator(
-                thermal_units_comm_status[(g, t)],  # binary indicator variable
-                0,                                  # when status = 1
-                thermal_units_out_power[(g, t)],    # left-hand side
-                GRB.EQUAL,                          # sense
-                0,                                  # right-hand side
-                name=f"max_power_{g}_{t}"
-                # thermal_units_comm_status[(g,t)] * pi_min[g] <= thermal_units_comm_status[(g,t)] * pi_max[g]
-            )
+    for g in range (len(thermal_units)):
+        model.addGenConstrIndicator(
+            thermal_units_comm_status[g,:],  # binary indicator variable
+            1,                                  # when status = 1
+            thermal_units_out_power[g,:],    # left-hand side
+            GRB.GREATER_EQUAL,                  # sense
+            pi_min[g],                          # right-hand side
+            name=f"min_power_{g}"
+            # thermal_units_comm_status[(g,t)] * pi_min[g] <= thermal_units_out_power[(g,t)]
+        )
+        model.addGenConstrIndicator(
+            thermal_units_comm_status[g,:],  # binary indicator variable
+            1,                                  # when status = 1
+            thermal_units_out_power[g,:],    # left-hand side
+            GRB.LESS_EQUAL,                     # sense
+            pi_max[g],                          # right-hand side
+            name=f"max_power_{g}"
+            # thermal_units_out_power[(g,t)] <= thermal_units_comm_status[(g,t)] * pi_max[g]
+        )
+        model.addGenConstrIndicator(
+            thermal_units_comm_status[g,:],  # binary indicator variable
+            0,                                  # when status = 1
+            thermal_units_out_power[g,:],    # left-hand side
+            GRB.EQUAL,                          # sense
+            0,                                  # right-hand side
+            name=f"max_power_{g}"
+            # thermal_units_comm_status[(g,t)] * pi_min[g] <= thermal_units_comm_status[(g,t)] * pi_max[g]
+        )
 
     # Thermal units logical constraints
-    for t in range(nTimeIntervals):
-        for g in thermal_units:
-            if t == 0:
-                model.addConstr(
-                    thermal_units_comm_status[(g,t)] - init_status[g] == thermal_units_startup_status[(g,t)] - thermal_units_shutdown_status[(g,t)],
-                    name="logical1_" + g + "_" + str(t),
-                )
-            else:
-                model.addConstr(
-                    thermal_units_comm_status[(g,t)] - thermal_units_comm_status[(g,t-1)] == thermal_units_startup_status[(g,t)] - thermal_units_shutdown_status[(g,t)],
-                    name="logical1_" + g + "_" + str(t),
-                )
+    model.addConstr(
+        thermal_units_comm_status[:, 0] - init_status == thermal_units_startup_status[:, 0] - thermal_units_shutdown_status[:, 0],
+        name="logical1_case_0"
+    )
+    model.addConstr(
+        thermal_units_comm_status[:, 1:] - thermal_units_comm_status[:, :-1] == thermal_units_startup_status[:, 1:] - thermal_units_shutdown_status[:, 1:],
+        name="logical1_0"
+    )
 
-            model.addConstr(
-                thermal_units_startup_status[(g,t)] + thermal_units_shutdown_status[(g,t)] <= 1,
-                name="logical2_" + g + "_" + str(t),
-            )
+    model.addConstr(
+        thermal_units_startup_status + thermal_units_shutdown_status <= 1,
+        name="logical2",
+    )
 
     model.optimize()
     show_results()
